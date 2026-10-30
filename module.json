@@ -1,0 +1,82 @@
+{
+  "id": "tiktok-studio",
+  "name": "TikTok Creator Studio Adapter",
+  "version": "1.0.0",
+  "namespace": "/custom/tiktok",
+  "entrypoint": "run.sh",
+  "protocol": "stdio-stream",
+  "capabilities": [
+    "studio",
+    "items",
+    "download",
+    "publish",
+    "upload",
+    "chat_completions",
+    "models"
+  ],
+  "config_schema": {
+    "title": "TikTok Creator Studio Config & HAR Import",
+    "module_id": "tiktok-studio",
+    "namespace": "/custom/tiktok",
+    "har_endpoint": "/custom/tiktok/v1/config/har",
+    "har_hint": "Drop download-tiktok.har here or select file (.har, .json) to auto-extract Cookie and CSRF token",
+    "fields": [
+      {
+        "key": "base_url",
+        "label": "TikTok Base URL",
+        "type": "text",
+        "placeholder": "https://www.tiktok.com",
+        "description": "Primary TikTok Creator Studio upstream URL"
+      },
+      {
+        "key": "enabled",
+        "label": "Module Status",
+        "type": "boolean",
+        "default": true,
+        "description": "Enable or disable TikTok Creator Studio requests"
+      },
+      {
+        "key": "cookie",
+        "label": "Session Cookie",
+        "type": "password",
+        "secret": true,
+        "placeholder": "Leave empty to keep existing cookie",
+        "description": "TikTok Creator Studio authenticated session cookie"
+      },
+      {
+        "key": "csrf_token",
+        "label": "CSRF Token (tt-csrf-token)",
+        "type": "password",
+        "secret": true,
+        "placeholder": "Leave empty to keep existing CSRF token",
+        "description": "TikTok CSRF protection token extracted from x-tt-csrf-token or cookies"
+      }
+    ]
+  },
+  "permissions": [
+    "network"
+  ],
+  "group": {
+    "enabled": true,
+    "providers": [
+      {
+        "id": "studio",
+        "name": "TikTok Creator Studio Profile & Config",
+        "subpath": "/studio",
+        "capabilities": ["studio", "manage"]
+      },
+      {
+        "id": "items",
+        "name": "TikTok Video Items & Watermark-Free Download",
+        "subpath": "/items",
+        "capabilities": ["items", "download"]
+      },
+      {
+        "id": "publish",
+        "name": "TikTok Video Upload Auth & Publish",
+        "subpath": "/publish",
+        "capabilities": ["publish", "upload"]
+      }
+    ]
+  }
+}
