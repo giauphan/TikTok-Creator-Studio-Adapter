@@ -117,6 +117,24 @@ class TestTikTokStudioModule(unittest.TestCase):
         })
         self.assertEqual(resp["status"], 401)
 
+    def test_sigv4_headers_generation(self):
+        from tiktok_studio.upload import sigv4_headers
+        headers, qs = sigv4_headers(
+            sk="test_sk",
+            ak="test_ak",
+            st="test_st",
+            method="GET",
+            host="www.tiktok.com",
+            path="/top/v1",
+            query_params={"Action": "ApplyUploadInner"},
+            body_bytes=b"",
+        )
+        self.assertIn("Authorization", headers)
+        self.assertTrue(headers["Authorization"].startswith("AWS4-HMAC-SHA256"))
+        self.assertIn("Credential=test_ak", headers["Authorization"])
+        self.assertEqual(headers["X-Amz-Security-Token"], "test_st")
+        self.assertIn("Action=ApplyUploadInner", qs)
+
 
 if __name__ == "__main__":
     unittest.main()

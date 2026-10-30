@@ -1,10 +1,17 @@
 """Configuration persistence and upstream HTTP client for TikTok Creator Studio."""
 
+import base64
+import hashlib
+import hmac
 import json
 import os
+import random
+import string
 import urllib.parse
 import urllib.request
 import uuid
+import zlib
+from datetime import datetime
 from pathlib import Path
 from .domain import (
     mask_secret,
@@ -12,6 +19,8 @@ from .domain import (
     validate_count,
     validate_item_id,
 )
+from .signer import TikTokSigner
+from .upload import create_project, upload_video_binary
 
 
 def get_config_file_path() -> Path:
@@ -225,7 +234,21 @@ def fetch_upload_auth(cfg: dict, req_headers: dict) -> dict:
 
 def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
     base_url, headers = _require_cookie(cfg, req_headers)
-    video_id = validate_item_id(str(body_json.get("video_id") or ""))
+
+    # Upload video binary if provided directly, otherwise validate video_id
+    video_bytes = None
+    if "video_path" in body_json or "file_path" in body_json:
+        p = Path(str(body_json.get("video_path") or body_json.get("file_path")))
+        if p.is_file():
+            video_bytes = p.read_bytes()
+    elif "video_base64" in body_json:
+        video_bytes = base64.b64decode(str(body_json["video_base64"]))
+
+    if video_bytes:
+        video_id = upload_video_binary(cfg, req_headers, video_bytes)
+    else:
+        video_id = validate_item_id(str(body_json.get("video_id") or ""))
+
     text = str(body_json.get("text") or body_json.get("title") or "").strip()
 
     # Determine visibility_type:
@@ -244,38 +267,69 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
     elif vis_raw in ("2", "friends", "follower", "followers"):
         visibility_type = 2
     else:
-        # Default or explicitly "only-me", "ony-me", "only_me", "private", "1"
         visibility_type = 1
 
     allow_comment = 1 if bool(body_json.get("allow_comment", True)) else 0
-    allow_duet = body_json.get("allow_duet")
-    allow_stitch = body_json.get("allow_stitch")
+    allow_duet = 1 if bool(body_json.get("allow_duet", False)) else 0
+    allow_stitch = 1 if bool(body_json.get("allow_stitch", False)) else 0
 
-    payload = json.dumps(
+    # 1. Create project
+    cid = create_project(base_url, headers)
+
+    # 2. Cryptographic signature (_signature and X-Bogus)
+    ua = headers.get("User-Agent") or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    ms_token = ""
+    cookie_str = headers.get("Cookie") or ""
+    for pair in cookie_str.split(";"):
+        if "=" in pair:
+            k, v = pair.strip().split("=", 1)
+            if k == "msToken":
+                ms_token = v
+                break
+
+    base_sign = "https://www.tiktok.com/api/v1/web/project/post/"
+    query_sign = (
+        f"app_name=tiktok_web&channel=tiktok_web&device_platform=web"
+        f"&aid=1988&msToken={ms_token}"
+    )
+    with TikTokSigner(ua) as signer:
+        sig = signer.sign(f"{base_sign}?{query_sign}")
+
+    # 3. Finalize and publish post
+    params = {
+        "app_name": "tiktok_web",
+        "channel": "tiktok_web",
+        "device_platform": "web",
+        "aid": "1988",
+        "msToken": ms_token,
+        "X-Bogus": sig["x_bogus"],
+        "_signature": sig["signature"],
+    }
+    post_url = f"{base_url}/tiktok/web/project/post/v1/?{urllib.parse.urlencode(params)}"
+    post_payload = json.dumps(
         {
             "post_common_info": {
-                "creation_id": str(uuid.uuid4()),
-                "enter_post_page_from": 2,
-                "post_type": 1,
+                "creation_id": cid,
+                "enter_post_page_from": 1,
+                "post_type": 3,
             },
             "feature_common_info_list": [
                 {
                     "geofencing_regions": [],
                     "playlist_name": "",
                     "playlist_id": "",
-                    "tcm_params": "{\"commerce_toggle_info\":{}}",
+                    "tcm_params": '{"commerce_toggle_info":{}}',
                     "sound_exemption": 0,
-                    "music_copyright": {
-                        "result": 1
-                    },
                     "anchors": [],
+                    "vedit_common_info": {
+                        "draft": "",
+                        "video_id": video_id,
+                    },
                     "privacy_setting_info": {
                         "visibility_type": visibility_type,
                         "allow_duet": allow_duet,
                         "allow_stitch": allow_stitch,
                         "allow_comment": allow_comment,
-                        "allow_content_reuse": 1,
-                        "allow_ai_remix": 2,
                     },
                 }
             ],
@@ -286,24 +340,33 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
                     "is_long_video": 0,
                     "single_post_feature_info": {
                         "text": text,
+                        "text_extra": [],
                         "markup_text": text,
-                        "mature_theme_type": 0,
+                        "music_info": {},
+                        "poster_delay": 0,
                     },
                 }
             ],
         }
     ).encode("utf-8")
-    url = f"{base_url}/tiktok/web/project/post/v1/?aid=1988&app_name=tiktok_creator_center"
+
     post_headers = {
         **headers,
         "Content-Type": "application/json",
-        "Referer": f"{base_url}/creator_center/upload",
+        "Origin": base_url,
+        "Referer": f"{base_url}/",
     }
-    raw = fetch_upstream_json(url, method="POST", headers=post_headers, body=payload)
+    raw = fetch_upstream_json(post_url, method="POST", headers=post_headers, body=post_payload)
+
+    single_resp = (raw or {}).get("single_post_resp_list", [{}])[0]
+    item_id = str(single_resp.get("item_id") or "")
+
     return {
         "project_id": str(raw.get("project_id") or ""),
+        "item_id": item_id,
         "project_status": int(raw.get("project_status") or 0),
         "visibility_type": visibility_type,
         "visibility": "only-me" if visibility_type == 1 else ("public" if visibility_type == 0 else "friends"),
         "status_code": int(raw.get("status_code") or 0),
+        "status": "published" if raw.get("status_code") == 0 else "error",
     }
