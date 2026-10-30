@@ -4,8 +4,14 @@ import json
 import os
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
-from .domain import mask_secret, parse_item_list_response, validate_count, validate_item_id
+from .domain import (
+    mask_secret,
+    parse_item_list_response,
+    validate_count,
+    validate_item_id,
+)
 
 
 def get_config_file_path() -> Path:
@@ -20,6 +26,15 @@ def load_module_config() -> dict:
         "csrf_token": "",
         "enabled": True,
     }
+    env_json = os.environ.get("MODULE_CONFIG_JSON", "").strip()
+    if env_json:
+        try:
+            parsed_env = json.loads(env_json)
+            if isinstance(parsed_env, dict):
+                default_cfg.update(parsed_env)
+        except Exception:
+            pass
+
     cfg_path = get_config_file_path()
     if cfg_path.is_file():
         try:
@@ -78,52 +93,166 @@ def build_upstream_headers(cfg: dict, req_headers: dict) -> dict:
     csrf = (
         req_headers.get("x-tt-csrf-token")
         or req_headers.get("tt-csrf-token")
+        or req_headers.get("x-tiktok-csrf-token")
         or cfg.get("csrf_token")
         or ""
     )
+    base_url = (cfg.get("base_url") or "https://www.tiktok.com").rstrip("/")
     headers = {
         "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            req_headers.get("user-agent")
+            or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         ),
         "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.tiktok.com/tiktokstudio/content",
+        "Referer": f"{base_url}/tiktokstudio/content",
+        "Origin": base_url,
     }
     if cookie:
         headers["Cookie"] = cookie
     if csrf:
         headers["x-tt-csrf-token"] = csrf
+        headers["tt-csrf-token"] = csrf
     return headers
 
 
-def fetch_upstream_json(url: str, method: str = "GET", headers: dict = None, body: bytes = None) -> dict:
+def fetch_upstream_json(
+    url: str, method: str = "GET", headers: dict = None, body: bytes = None
+) -> dict:
     req = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
     with urllib.request.urlopen(req, timeout=20) as resp:
         raw = resp.read().decode("utf-8", errors="replace")
         return json.loads(raw)
 
 
-def fetch_items(cfg: dict, req_headers: dict, cursor: str = "0", count: int = 10) -> dict:
-    validate_count(count)
+def _require_cookie(cfg: dict, req_headers: dict) -> tuple:
+    if not cfg.get("enabled", True):
+        raise PermissionError("TikTok Creator Studio module is currently disabled.")
     base_url = (cfg.get("base_url") or "https://www.tiktok.com").rstrip("/")
     headers = build_upstream_headers(cfg, req_headers)
     if not headers.get("Cookie"):
-        raise PermissionError("Missing TikTok session cookie. Configure credentials or import HAR first.")
-    params = urllib.parse.urlencode({"cursor": cursor, "count": count, "aid": "1988"})
-    url = f"{base_url}/api/v1/item/delivery/list?{params}"
-    raw = fetch_upstream_json(url, method="GET", headers=headers)
+        raise PermissionError(
+            "Missing TikTok session cookie. Configure credentials or import HAR first."
+        )
+    return base_url, headers
+
+
+def fetch_user_profile(cfg: dict, req_headers: dict) -> dict:
+    base_url, headers = _require_cookie(cfg, req_headers)
+    studio_url = f"{base_url}/tiktokstudio/api/web/user"
+    try:
+        raw = fetch_upstream_json(studio_url, method="GET", headers=headers)
+        if isinstance(raw, dict) and raw.get("userId"):
+            base_info = raw.get("userBaseInfo") or {}
+            return {
+                "user_id": str(raw.get("userId") or ""),
+                "nickname": str(base_info.get("nickname") or "Creator"),
+                "avatar_thumb": base_info.get("avatarUrl"),
+                "status_code": int(raw.get("statusCode") or 0),
+            }
+    except Exception:
+        pass
+
+    fallback_url = f"{base_url}/api/v1/user/profile/upload/?locale=en&aid=1988&priority_region=US"
+    raw = fetch_upstream_json(fallback_url, method="GET", headers=headers)
+    user = (raw or {}).get("user") or {}
+    avatar = ((user.get("avatar_thumb") or {}).get("url_list") or [None])[0]
+    return {
+        "user_id": str(user.get("uid") or ""),
+        "nickname": str(user.get("nickname") or ""),
+        "sec_uid": user.get("sec_uid"),
+        "avatar_thumb": avatar,
+        "status_code": int((raw or {}).get("status_code") or 0),
+    }
+
+
+def fetch_items(
+    cfg: dict, req_headers: dict, cursor: str = "0", count: int = 10
+) -> dict:
+    validate_count(count)
+    base_url, headers = _require_cookie(cfg, req_headers)
+    try:
+        cursor_int = int(cursor or 0)
+    except Exception:
+        cursor_int = 0
+    url = (
+        f"{base_url}/tiktok/creator/manage/item_list/v1/"
+        "?locale=en&aid=1988&priority_region=US&app_name=tiktok_creator_center"
+    )
+    payload = json.dumps(
+        {
+            "cursor": cursor_int,
+            "size": count,
+            "query": {
+                "conditions": [],
+                "sort_orders": [{"field_name": "post_time", "order": 2}],
+                "is_recent_posts": False,
+            },
+        }
+    ).encode("utf-8")
+    post_headers = {**headers, "Content-Type": "application/json"}
+    raw = fetch_upstream_json(url, method="POST", headers=post_headers, body=payload)
     return parse_item_list_response(raw)
 
 
 def resolve_download(cfg: dict, req_headers: dict, item_id: str) -> dict:
     clean_id = validate_item_id(item_id)
-    listing = fetch_items(cfg, req_headers, cursor="0", count=20)
+    listing = fetch_items(cfg, req_headers, cursor="0", count=50)
     for item in listing.get("items", []):
         if item.get("id") == clean_id and item.get("download_url"):
             return {
                 "item_id": clean_id,
                 "download_url": item["download_url"],
+                "direct_download_url": item["download_url"],
+                "play_addrs": item.get("play_urls", []),
                 "cover_url": item.get("cover_url", ""),
                 "duration_ms": item.get("duration_ms", 0),
             }
     raise LookupError(f"Item '{clean_id}' not found or has no downloadable stream")
+
+
+def fetch_upload_auth(cfg: dict, req_headers: dict) -> dict:
+    base_url, headers = _require_cookie(cfg, req_headers)
+    url = f"{base_url}/api/v1/video/upload/auth/?aid=1988"
+    raw = fetch_upstream_json(url, method="GET", headers=headers)
+    return {
+        "video_token_v5": str(raw.get("video_token_v5") or ""),
+        "audio_token_v5": str(raw.get("audio_token_v5") or ""),
+        "store_region": str(raw.get("store_region") or "alisg"),
+        "status_code": int(raw.get("status_code") or 0),
+    }
+
+
+def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
+    base_url, headers = _require_cookie(cfg, req_headers)
+    video_id = validate_item_id(str(body_json.get("video_id") or ""))
+    text = str(body_json.get("text") or body_json.get("title") or "").strip()
+    payload = json.dumps(
+        {
+            "post_common_info": {
+                "creation_id": str(uuid.uuid4()),
+                "enter_post_page_from": "creator_center",
+                "post_type": 1,
+            },
+            "single_post_req_list": [
+                {
+                    "batch_index": 0,
+                    "video_id": video_id,
+                    "is_long_video": 0,
+                    "single_post_feature_info": {
+                        "text": text,
+                        "markup_text": text,
+                        "mature_theme_type": 0,
+                    },
+                }
+            ],
+        }
+    ).encode("utf-8")
+    url = f"{base_url}/tiktok/web/project/post/v1/?aid=1988&app_name=tiktok_creator_center"
+    post_headers = {**headers, "Content-Type": "application/json"}
+    raw = fetch_upstream_json(url, method="POST", headers=post_headers, body=payload)
+    return {
+        "project_id": str(raw.get("project_id") or ""),
+        "project_status": int(raw.get("project_status") or 0),
+        "status_code": int(raw.get("status_code") or 0),
+    }

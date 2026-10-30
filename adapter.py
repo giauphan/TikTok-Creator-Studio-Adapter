@@ -12,7 +12,10 @@ import uuid
 from tiktok_studio.client import (
     build_masked_config_view,
     fetch_items,
+    fetch_upload_auth,
+    fetch_user_profile,
     load_module_config,
+    publish_video_post,
     resolve_download,
     save_module_config,
 )
@@ -55,11 +58,19 @@ def handle_request(req: dict) -> dict:
     sub = clean_path.strip("/")
     headers = normalize_headers(req.get("headers"))
     raw_body = str(req.get("body") or "")
-    namespace = os.environ.get("MODULE_NAMESPACE", "/custom/tiktok")
+    namespace = os.environ.get("MODULE_NAMESPACE", "/tiktok")
+    module_id = os.environ.get("MODULE_ID", "tiktok-studio")
     cfg = load_module_config()
 
     # 1. Self-contained UI config page
-    if method == "GET" and sub in ("", "ui", "settings", "config-page", "v1/config-page"):
+    if method == "GET" and sub in (
+        "",
+        "ui",
+        "settings",
+        "config-page",
+        "v1/config-page",
+        "studio/ui",
+    ):
         return html_resp(200, render_module_ui_html(namespace))
 
     # 2. Status endpoint
@@ -68,7 +79,7 @@ def handle_request(req: dict) -> dict:
         return json_resp(
             200,
             {
-                "module": "tiktok-studio",
+                "module": module_id,
                 "status": "enabled" if cfg.get("enabled", True) else "disabled",
                 "namespace": namespace,
                 **masked,
@@ -95,7 +106,11 @@ def handle_request(req: dict) -> dict:
                 return json_resp(400, {"error": {"code": 400, "message": str(exc)}})
 
     # 4. HAR Import endpoint
-    if method == "POST" and sub in ("config/har", "v1/config/har", "studio/config/har"):
+    if method == "POST" and sub in (
+        "config/har",
+        "v1/config/har",
+        "studio/config/har",
+    ):
         try:
             extracted = extract_tiktok_config_from_har(raw_body)
             updated = save_module_config(extracted)
@@ -110,13 +125,25 @@ def handle_request(req: dict) -> dict:
         except Exception as exc:
             return json_resp(400, {"error": {"code": 400, "message": str(exc)}})
 
-    # 5. Items & Download endpoints
+    # 5. User profile endpoint
+    if sub in ("user", "v1/user", "studio/user"):
+        try:
+            return json_resp(200, fetch_user_profile(cfg, headers))
+        except PermissionError as exc:
+            return json_resp(401, {"error": {"code": 401, "message": str(exc)}})
+        except Exception as exc:
+            return json_resp(502, {"error": {"code": 502, "message": str(exc)}})
+
+    # 6. Items & Download endpoints
     if sub in ("items", "v1/items", "items/list"):
         try:
             q = urllib.parse.parse_qs(query_str)
             cursor = q.get("cursor", ["0"])[0]
-            count = int(q.get("count", ["10"])[0])
-            return json_resp(200, fetch_items(cfg, headers, cursor=cursor, count=count))
+            count_raw = q.get("count", q.get("size", ["10"]))[0]
+            count = int(count_raw)
+            return json_resp(
+                200, fetch_items(cfg, headers, cursor=cursor, count=count)
+            )
         except PermissionError as exc:
             return json_resp(401, {"error": {"code": 401, "message": str(exc)}})
         except ValueError as exc:
@@ -138,7 +165,27 @@ def handle_request(req: dict) -> dict:
         except Exception as exc:
             return json_resp(502, {"error": {"code": 502, "message": str(exc)}})
 
-    # 6. OpenAI-compatible models & chat completions for Gateway compatibility
+    # 7. Upload Auth & Publish endpoints
+    if sub in ("upload/auth", "v1/upload/auth", "publish/upload/auth"):
+        try:
+            return json_resp(200, fetch_upload_auth(cfg, headers))
+        except PermissionError as exc:
+            return json_resp(401, {"error": {"code": 401, "message": str(exc)}})
+        except Exception as exc:
+            return json_resp(502, {"error": {"code": 502, "message": str(exc)}})
+
+    if method == "POST" and sub in ("publish", "v1/publish", "publish/post"):
+        try:
+            body_json = json.loads(raw_body) if raw_body else {}
+            return json_resp(200, publish_video_post(cfg, headers, body_json))
+        except ValueError as exc:
+            return json_resp(400, {"error": {"code": 400, "message": str(exc)}})
+        except PermissionError as exc:
+            return json_resp(401, {"error": {"code": 401, "message": str(exc)}})
+        except Exception as exc:
+            return json_resp(502, {"error": {"code": 502, "message": str(exc)}})
+
+    # 8. OpenAI-compatible models & chat completions for Gateway compatibility
     if sub.endswith("models"):
         return json_resp(
             200,
