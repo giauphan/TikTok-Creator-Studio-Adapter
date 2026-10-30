@@ -36,21 +36,49 @@ All configuration metadata and `config_schema` live inside [`module.json`](./mod
 
 ---
 
-## 3. Module Endpoints (`/custom/tiktok`)
+## 3. Module Endpoints (`/tiktok` & `/custom/tiktok`)
 
 | Method & Path | Description |
 |---|---|
-| `GET /custom/tiktok/ui` | Self-contained HTML configuration & HAR import UI |
-| `GET /custom/tiktok/v1/status` | Module readiness and masked credential status |
-| `GET /custom/tiktok/v1/config` | Read current masked configuration |
-| `POST /custom/tiktok/v1/config` | Update `base_url`, `cookie`, `csrf_token`, `enabled` |
-| `POST /custom/tiktok/v1/config/har` | Extract credentials from a DevTools HAR capture (`download-tiktok.har`) |
-| `GET /custom/tiktok/v1/items?cursor=0&count=10` | List creator videos with stats and watermark-free `download_url` |
-| `GET /custom/tiktok/v1/download?item_id=<id>` | Resolve direct watermark-free CDN download link |
+| `GET /tiktok/ui` | Self-contained HTML configuration & HAR import UI |
+| `GET /tiktok/v1/status` | Module readiness and masked credential status |
+| `GET /tiktok/v1/user` | Fetch authenticated Creator profile (`user_id`, `nickname`) |
+| `GET /tiktok/v1/config` | Read current masked configuration |
+| `POST /tiktok/v1/config` | Update `base_url`, `cookie`, `csrf_token`, `enabled` |
+| `POST /tiktok/v1/config/har` | Extract credentials from a DevTools HAR capture (`download-tiktok.har`) |
+| `GET /tiktok/v1/items?cursor=0&count=10` | List creator videos with stats and watermark-free `download_url` |
+| `GET /tiktok/v1/download?item_id=<id>` | Resolve direct watermark-free CDN download link |
+| `GET /tiktok/v1/upload/auth` | Request upload authorization (`video_token_v5`, `store_region`) |
+| `POST /tiktok/v1/publish` | Publish video post with caption and hashtags |
 
 ---
 
-## 4. Running Tests
+## 4. Video Publishing Workflow
+
+For complete instructions, request parameters, and Python examples, see the [Video Publishing Guide](./docs/PUBLISHING.md).
+
+### Quick Publish Example
+
+```bash
+# 1. Obtain upload authorization token
+AUTH=$(curl -s http://127.0.0.1:20130/tiktok/v1/upload/auth)
+TOKEN=$(echo "$AUTH" | jq -r '.video_token_v5')
+
+# 2. Upload video binary to TikTok media store
+# (Upload using your video asset and the received token)
+
+# 3. Publish post to TikTok Creator Center
+curl -X POST http://127.0.0.1:20130/tiktok/v1/publish \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"video_id\": \"$TOKEN\",
+    \"text\": \"Created with Toolcase Gateway! #ai #creator #tech\"
+  }"
+```
+
+---
+
+## 5. Running Tests
 
 ```bash
 python3 -m unittest discover -s tests
