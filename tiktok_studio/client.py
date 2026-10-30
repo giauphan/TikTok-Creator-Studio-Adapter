@@ -227,13 +227,58 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
     base_url, headers = _require_cookie(cfg, req_headers)
     video_id = validate_item_id(str(body_json.get("video_id") or ""))
     text = str(body_json.get("text") or body_json.get("title") or "").strip()
+
+    # Determine visibility_type:
+    # 0 = Public (everyone)
+    # 1 = Only me (private / ony-me)
+    # 2 = Friends / Followers
+    vis_raw = str(
+        body_json.get("visibility")
+        or body_json.get("privacy")
+        or body_json.get("status")
+        or "only-me"
+    ).lower().strip()
+
+    if vis_raw in ("0", "public", "everyone"):
+        visibility_type = 0
+    elif vis_raw in ("2", "friends", "follower", "followers"):
+        visibility_type = 2
+    else:
+        # Default or explicitly "only-me", "ony-me", "only_me", "private", "1"
+        visibility_type = 1
+
+    allow_comment = 1 if bool(body_json.get("allow_comment", True)) else 0
+    allow_duet = body_json.get("allow_duet")
+    allow_stitch = body_json.get("allow_stitch")
+
     payload = json.dumps(
         {
             "post_common_info": {
                 "creation_id": str(uuid.uuid4()),
-                "enter_post_page_from": "creator_center",
+                "enter_post_page_from": 2,
                 "post_type": 1,
             },
+            "feature_common_info_list": [
+                {
+                    "geofencing_regions": [],
+                    "playlist_name": "",
+                    "playlist_id": "",
+                    "tcm_params": "{\"commerce_toggle_info\":{}}",
+                    "sound_exemption": 0,
+                    "music_copyright": {
+                        "result": 1
+                    },
+                    "anchors": [],
+                    "privacy_setting_info": {
+                        "visibility_type": visibility_type,
+                        "allow_duet": allow_duet,
+                        "allow_stitch": allow_stitch,
+                        "allow_comment": allow_comment,
+                        "allow_content_reuse": 1,
+                        "allow_ai_remix": 2,
+                    },
+                }
+            ],
             "single_post_req_list": [
                 {
                     "batch_index": 0,
@@ -249,10 +294,16 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
         }
     ).encode("utf-8")
     url = f"{base_url}/tiktok/web/project/post/v1/?aid=1988&app_name=tiktok_creator_center"
-    post_headers = {**headers, "Content-Type": "application/json"}
+    post_headers = {
+        **headers,
+        "Content-Type": "application/json",
+        "Referer": f"{base_url}/creator_center/upload",
+    }
     raw = fetch_upstream_json(url, method="POST", headers=post_headers, body=payload)
     return {
         "project_id": str(raw.get("project_id") or ""),
         "project_status": int(raw.get("project_status") or 0),
+        "visibility_type": visibility_type,
+        "visibility": "only-me" if visibility_type == 1 else ("public" if visibility_type == 0 else "friends"),
         "status_code": int(raw.get("status_code") or 0),
     }

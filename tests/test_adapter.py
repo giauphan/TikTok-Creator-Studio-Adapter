@@ -108,6 +108,15 @@ class TestTikTokStudioModule(unittest.TestCase):
         body = json.loads(status_resp["body"])
         self.assertIn("configured", body)
 
+    def test_publish_visibility_mapping(self):
+        # Without cookie, returns 401 Unauthorized
+        resp = handle_request({
+            "method": "POST",
+            "path": "/v1/publish",
+            "body": json.dumps({"text": "test post", "visibility": "only-me"})
+        })
+        self.assertEqual(resp["status"], 401)
+
 
 if __name__ == "__main__":
     unittest.main()

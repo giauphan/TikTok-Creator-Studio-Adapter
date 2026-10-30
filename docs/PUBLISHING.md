@@ -115,9 +115,9 @@ Once the upload completes, the `video_token_v5` (or returned upload `video_id`) 
 
 ---
 
-### Step 3: Publish Video Post
+### Step 3: Publish Video Post with Visibility / Status
 
-Submit the publish request with your video identifier, caption text, and hashtags:
+Submit the publish request with your video identifier, caption text, hashtags, and visibility setting (`only-me`, `public`, or `friends`):
 
 ```bash
 curl -X POST http://127.0.0.1:20130/tiktok/v1/publish \
@@ -125,7 +125,7 @@ curl -X POST http://127.0.0.1:20130/tiktok/v1/publish \
   -d '{
     "video_id": "v1c025g50000dbi47gfog65vcfe2cs80",
     "text": "Exciting AI video generated with Toolcase Gateway! #ai #tech #creator",
-    "title": "Optional Title"
+    "visibility": "only-me"
   }'
 ```
 
@@ -134,10 +134,24 @@ curl -X POST http://127.0.0.1:20130/tiktok/v1/publish \
 |---|---|---|---|
 | `video_id` | `string` | **Yes** | Valid video token or ID returned from upload authorization |
 | `text` | `string` | **Yes** | Post description, caption, hashtags (`#tag`), and mentions (`@username`) |
+| `visibility` / `status` | `string` | No | Video visibility: `"only-me"` (private, default), `"public"` (everyone), or `"friends"` |
 | `title` | `string` | No | Optional video title |
+| `allow_comment` | `boolean` | No | Whether to allow comments (default: `true`) |
+| `allow_duet` | `boolean` | No | Whether to allow Duets |
+| `allow_stitch` | `boolean` | No | Whether to allow Stitches |
 
 #### Response
 ```json
+{
+  "project_id": "7702355712046828820",
+  "project_status": 1,
+  "visibility_type": 1,
+  "visibility": "only-me",
+  "status_code": 0
+}
+```
+
+- `visibility_type`: `1` represents private ("Only me" / `visibility_only_you`), `0` represents public, `2` represents friends only.
 {
   "project_id": "7702355712046828820",
   "project_status": 1,
