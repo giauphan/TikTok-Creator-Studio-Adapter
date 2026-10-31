@@ -1,6 +1,8 @@
 {
   "id": "tiktok-studio",
   "name": "TikTok Creator Studio Adapter",
+  "short_name": "TikTok Creator Studio",
+  "icon": "♬",
   "version": "1.0.0",
   "namespace": "/custom/tiktok",
   "entrypoint": "run.sh",

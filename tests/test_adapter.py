@@ -39,6 +39,8 @@ class TestTikTokStudioModule(unittest.TestCase):
                     "item_id": "7420000000000000001",
                     "desc": "Creator Studio Video #tiktok",
                     "create_time": "1729000000",
+                    "post_time": "1729100000",
+                    "schedule_time": "1729100000",
                     "duration": 15000,
                     "cover_url": ["https://p16-sign-sg.tiktokcdn.com/cover.jpeg"],
                     "play_addr": [
@@ -62,6 +64,9 @@ class TestTikTokStudioModule(unittest.TestCase):
             "https://webapp-sg.tiktok.com/video/tos/alisg/direct.mp4",
         )
         self.assertEqual(item["stats"]["play_count"], 1200)
+        self.assertEqual(item["schedule_time"], 1729100000)
+        self.assertEqual(item["post_time"], 1729100000)
+        self.assertTrue(item["is_scheduled"])
 
     def test_extract_har_credentials(self):
         har = json.dumps(
@@ -141,6 +146,7 @@ class TestTikTokStudioModule(unittest.TestCase):
     @patch("tiktok_studio.client.TikTokSigner")
     @patch("tiktok_studio.client.create_project", return_value="test_creation_id_123")
     def test_publish_video_post_with_schedule_time(self, _mock_create, mock_signer_cls, mock_fetch):
+        import time
         from tiktok_studio.client import publish_video_post
         mock_signer = mock_signer_cls.return_value.__enter__.return_value
         mock_signer.sign.return_value = {"x_bogus": "bogus123", "signature": "sig123"}
@@ -151,19 +157,43 @@ class TestTikTokStudioModule(unittest.TestCase):
             "single_post_resp_list": [{"item_id": "item_888"}],
         }
         cfg = {"base_url": "https://www.tiktok.com", "cookie": "sessionid=123; msToken=tok456"}
+        target_time = int(time.time()) + 3600
         body = {
             "video_id": "v09044g4000000000000000000000000",
             "text": "Scheduled post test",
-            "schedule_time": 1793450000,
+            "schedule_time": target_time,
+            "visibility": "only-me",  # Should be forced to public (0) for schedule
         }
         res = publish_video_post(cfg, {}, body)
         self.assertEqual(res["status"], "scheduled")
-        self.assertEqual(res["schedule_time"], 1793450000)
+        self.assertEqual(res["schedule_time"], target_time)
         self.assertEqual(res["project_id"], "proj_999")
+        self.assertEqual(res["visibility"], "public")
 
         call_args = mock_fetch.call_args
         sent_body = json.loads(call_args.kwargs["body"].decode("utf-8"))
-        self.assertEqual(sent_body["feature_common_info_list"][0]["schedule_time"], 1793450000)
+        feature = sent_body["feature_common_info_list"][0]
+        self.assertEqual(feature["schedule_time"], target_time)
+        self.assertEqual(feature["privacy_setting_info"]["visibility_type"], 0)
+        self.assertEqual(feature["privacy_setting_info"]["allow_content_reuse"], 1)
+        self.assertEqual(feature["privacy_setting_info"]["allow_ai_remix"], 1)
+
+    def test_schedule_time_boundary_validation(self):
+        import time
+        from tiktok_studio.client import publish_video_post
+        cfg = {"base_url": "https://www.tiktok.com", "cookie": "sessionid=123;"}
+
+        # Too soon (< 15 mins)
+        too_soon = int(time.time()) + 300
+        with self.assertRaises(ValueError) as ctx:
+            publish_video_post(cfg, {}, {"video_id": "v123", "schedule_time": too_soon})
+        self.assertIn("at least 15 minutes", str(ctx.exception))
+
+        # Too far (> 30 days)
+        too_far = int(time.time()) + 35 * 86400
+        with self.assertRaises(ValueError) as ctx2:
+            publish_video_post(cfg, {}, {"video_id": "v123", "schedule_time": too_far})
+        self.assertIn("exceeds maximum schedule window", str(ctx2.exception))
 
 
 if __name__ == "__main__":

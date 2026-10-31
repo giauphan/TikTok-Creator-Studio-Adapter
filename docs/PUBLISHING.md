@@ -67,16 +67,33 @@ Expected response:
 
 ---
 
-## 3. The 3-Step Publishing Lifecycle
+## 3. Video Publishing Workflows
 
-Publishing a video requires three steps:
-1. **Get Upload Authorization**: Request upload credentials and target storage region.
-2. **Upload Binary**: Upload the video file using the returned session authorization tokens.
-3. **Publish Post**: Call the publish endpoint with the `video_id`, caption, and hashtags.
+You can publish videos in one of two ways:
+- **Simplified 1-Step Publishing (Recommended)**: Pass `video_path` directly to `/tiktok/v1/publish`. The adapter automatically negotiates ByteDance TOS tokens, signs AWS SigV4 multipart chunks, commits the upload, and publishes or schedules the post in a single call.
+- **Manual 3-Step Lifecycle**: Request upload authorization (`/v1/upload/auth`), upload chunks manually, then submit `/v1/publish` with `video_id`.
 
 ---
 
-### Step 1: Request Upload Authorization
+### Option A: 1-Step Direct Publishing (Recommended)
+
+Simply point to your video file on disk:
+
+```bash
+curl -X POST http://127.0.0.1:28130/tiktok/v1/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_path": "/path/to/my_video.mp4",
+    "text": "Created with Toolcase Gateway! #ai #tech #creator",
+    "visibility": "public"
+  }'
+```
+
+---
+
+### Option B: Manual 3-Step Lifecycle
+
+#### Step 1: Request Upload Authorization
 
 Request upload authorization tokens from TikTok Creator Studio:
 
@@ -84,7 +101,7 @@ Request upload authorization tokens from TikTok Creator Studio:
 curl -s http://127.0.0.1:28130/tiktok/v1/upload/auth
 ```
 
-#### Response
+##### Response
 ```json
 {
   "video_token_v5": "v1c025g50000dbi47gfog65vcfe2cs80",
@@ -97,9 +114,7 @@ curl -s http://127.0.0.1:28130/tiktok/v1/upload/auth
 - `video_token_v5`: Unique identifier for the pending video asset.
 - `store_region`: Target storage cluster (e.g. `alisg` for Asia, `us-east` for North America).
 
----
-
-### Step 2: Upload Video Binary
+#### Step 2: Upload Video Binary
 
 Upload your `.mp4` video binary directly to TikTok's media ingestion cluster using the `video_token_v5` and target region:
 
@@ -111,11 +126,7 @@ curl -X POST "https://tos-${store_region}.tiktok.com/upload/video" \
   --data-binary "@my_video.mp4"
 ```
 
-Once the upload completes, the `video_token_v5` (or returned upload `video_id`) is ready to be published.
-
----
-
-### Step 3: Publish Video Post with Visibility / Status
+#### Step 3: Publish Video Post with Visibility / Status
 
 Submit the publish request with your video identifier, caption text, hashtags, and visibility setting (`only-me`, `public`, or `friends`):
 
@@ -129,57 +140,111 @@ curl -X POST http://127.0.0.1:28130/tiktok/v1/publish \
   }'
 ```
 
-#### Request Parameters
+---
+
+### Request Parameters (`POST /tiktok/v1/publish`)
+
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `video_id` | `string` | **Yes** | Valid video token or ID returned from upload authorization |
-| `text` | `string` | **Yes** | Post description, caption, hashtags (`#tag`), and mentions (`@username`) |
-| `visibility` / `status` | `string` | No | Video visibility: `"only-me"` (private, default), `"public"` (everyone), or `"friends"` |
-| `title` | `string` | No | Optional video title |
-| `schedule_time` | `integer` | No | Unix timestamp for scheduled publishing (between 15 min and 10 days in future) |
+| `video_path` / `file_path` | `string` | Conditional | Path to local `.mp4` video file for automatic 1-step upload |
+| `video_base64` | `string` | Conditional | Base64-encoded video binary for automatic 1-step upload |
+| `video_id` | `string` | Conditional | Video token/ID (required if not using `video_path` or `video_base64`) |
+| `text` / `title` | `string` | **Yes** | Post description, caption, hashtags (`#tag`), and mentions (`@username`) |
+| `schedule_time` | `integer` | No | Unix timestamp (in seconds) for scheduled publication (between 15 min and 30 days ahead) |
+| `visibility` / `privacy` | `string` | No | Video visibility: `"only-me"` (private, default), `"public"` (everyone), or `"friends"`. Note: Scheduled posts automatically use `"public"`. |
+| `tz_name` | `string` | No | Timezone name for scheduled publication (default: `"UTC"`, e.g. `"America/New_York"`) |
 | `allow_comment` | `boolean` | No | Whether to allow comments (default: `true`) |
-| `allow_duet` | `boolean` | No | Whether to allow Duets |
-| `allow_stitch` | `boolean` | No | Whether to allow Stitches |
+| `allow_duet` | `boolean` | No | Whether to allow Duets (default: `false`) |
+| `allow_stitch` | `boolean` | No | Whether to allow Stitches (default: `false`) |
 
-#### Response
+#### Immediate Publish Response Example
 ```json
 {
   "project_id": "7702355712046828820",
+  "item_id": "7702355712046828821",
   "project_status": 1,
   "visibility_type": 1,
   "visibility": "only-me",
-  "status_code": 0
+  "status_code": 0,
+  "status_msg": "",
+  "status": "published"
 }
 ```
 
-- `visibility_type`: `1` represents private ("Only me" / `visibility_only_you`), `0` represents public, `2` represents friends only.
 - `project_id`: Creator Center project ID for the published post.
+- `item_id`: TikTok item/video identifier.
 - `project_status`: Status indicator (`1` = submitted/processing).
+- `visibility_type`: `0` = public, `1` = private ("Only me"), `2` = friends only.
+- `status`: `"published"` for immediate posts, `"scheduled"` for scheduled posts.
 - `status_code`: `0` indicates success.
 
 ---
 
-## 4. Verifying Published Post
+## 4. Video Scheduling (TikTok Creator Center)
 
-After publishing, check your Creator Studio library to verify the post is live and view analytics:
+The TikTok Creator Studio adapter supports scheduling video publications in advance on creator accounts with scheduling capabilities.
+
+### How Scheduling Works
+1. **Timing Window**: The `schedule_time` parameter must be an integer Unix timestamp between **15 minutes** and **30 days** in the future.
+2. **Automatic Storage Acknowledgment**: Before dispatching a scheduled post, the adapter automatically calls TikTok's `/api/v1/post_schedule/ack/?ack_type=2` endpoint to authorize server-side video staging, avoiding upstream `Invalid parameters` (`status_code: 5`) errors.
+3. **Visibility Invariant**: TikTok web does not allow private scheduled posts; scheduled videos are automatically published with `visibility_type: 0` (`"public"`).
+
+### Schedule Post Example (`curl`)
+
+```bash
+# Calculate timestamp: e.g. 2 days in the future
+SCHEDULE_TS=$(($(date +%s) + 172800))
+
+curl -X POST http://127.0.0.1:28130/tiktok/v1/publish \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"video_path\": \"/path/to/my_video.mp4\",
+    \"text\": \"Scheduled release for later this week! #ai #future\",
+    \"schedule_time\": ${SCHEDULE_TS}
+  }"
+```
+
+#### Scheduled Response Example
+```json
+{
+  "project_id": "7702784686095111175",
+  "item_id": "7702784742617337095",
+  "project_status": 1,
+  "visibility_type": 0,
+  "visibility": "public",
+  "status_code": 0,
+  "status_msg": "",
+  "status": "scheduled",
+  "schedule_time": 1793613600
+}
+```
+
+---
+
+## 5. Verifying Published & Scheduled Posts
+
+Query your Creator Studio library to verify posts, view processing state, and retrieve direct CDN download links:
 
 ```bash
 curl -s "http://127.0.0.1:28130/tiktok/v1/items?count=5"
 ```
 
-Response snippet:
+### Response Example
 ```json
 {
   "status_code": 0,
   "has_more": false,
-  "total": 1,
+  "total": 2,
   "items": [
     {
-      "id": "7702355712046828820",
-      "item_id": "7702355712046828820",
-      "desc": "Exciting AI video generated with Toolcase Gateway! #ai #tech #creator",
-      "create_time": 1793344451,
-      "duration_ms": 8010,
+      "id": "7702784742617337095",
+      "item_id": "7702784742617337095",
+      "desc": "Scheduled release for later this week! #ai #future",
+      "create_time": 1793444335,
+      "post_time": 1793613600,
+      "schedule_time": 1793613600,
+      "is_scheduled": true,
+      "duration_ms": 10027,
       "download_url": "https://webapp-sg.tiktok.com/...",
       "stats": {
         "play_count": 0,
@@ -192,56 +257,59 @@ Response snippet:
 }
 ```
 
+- `is_scheduled`: `true` indicates the post is queued for a future release timestamp.
+- `schedule_time`: Target future publication timestamp in seconds.
+- `post_time`: Publication timestamp (matches `schedule_time` for scheduled posts).
+
 ---
 
-## 5. Complete Python Publishing Example
+## 6. Complete Python Publishing Examples
 
-The following script automates the complete upload and publish workflow:
-
+### Example 1: 1-Step Publishing (Direct File Upload)
 ```python
 import json
 import urllib.request
-import urllib.parse
 
 GATEWAY_BASE = "http://127.0.0.1:28130/tiktok"
 
-def request_json(path, method="GET", body=None):
+def post_json(path, payload):
     url = f"{GATEWAY_BASE}{path}"
     headers = {"Content-Type": "application/json"}
-    data = json.dumps(body).encode("utf-8") if body else None
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
     with urllib.request.urlopen(req) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
-def publish_video(video_file_path: str, caption: str):
-    # 1. Check account readiness
-    user = request_json("/v1/user")
-    print(f"Logged in as: {user.get('nickname')} (ID: {user.get('user_id')})")
+# Publish video directly using local file path
+result = post_json("/v1/publish", {
+    "video_path": "render.mp4",
+    "text": "Created with Toolcase Gateway! #ai #creator #tech",
+    "visibility": "public"
+})
+print("Published post result:", result)
+```
 
-    # 2. Get upload authorization
-    auth = request_json("/v1/upload/auth")
-    video_token = auth.get("video_token_v5")
-    region = auth.get("store_region", "alisg")
-    print(f"Obtained upload token: {video_token[:12]}... (region: {region})")
+### Example 2: Scheduled Publishing
+```python
+import time
+import json
+import urllib.request
 
-    # 3. Publish post to TikTok Creator Center
-    print(f"Publishing post: '{caption}'...")
-    publish_payload = {
-        "video_id": video_token,
-        "text": caption
-    }
-    result = request_json("/v1/publish", method="POST", body=publish_payload)
-    project_id = result.get("project_id")
-    print(f"Video published successfully! Project ID: {project_id}")
-    return result
+GATEWAY_BASE = "http://127.0.0.1:28130/tiktok"
 
-if __name__ == "__main__":
-    publish_video("render.mp4", "Created with Toolcase Gateway & MuseAI! #animation #vfx")
+# Schedule post for 2 days from now (Unix timestamp in seconds)
+schedule_timestamp = int(time.time()) + (2 * 86400)
+
+scheduled_result = post_json("/v1/publish", {
+    "video_path": "render.mp4",
+    "text": "Scheduled premier! #ai #future",
+    "schedule_time": schedule_timestamp
+})
+print(f"Post scheduled for timestamp {schedule_timestamp}:", scheduled_result)
 ```
 
 ---
 
-## 6. Error Handling & Troubleshooting
+## 7. Error Handling & Troubleshooting
 
 | HTTP Status | Error Reason | Resolution |
 |---|---|---|

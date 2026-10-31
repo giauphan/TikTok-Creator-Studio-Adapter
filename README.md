@@ -49,32 +49,43 @@ All configuration metadata and `config_schema` live inside [`module.json`](./mod
 | `GET /tiktok/v1/items?cursor=0&count=10` | List creator videos with stats and watermark-free `download_url` |
 | `GET /tiktok/v1/download?item_id=<id>` | Resolve direct watermark-free CDN download link |
 | `GET /tiktok/v1/upload/auth` | Request upload authorization (`video_token_v5`, `store_region`) |
-| `POST /tiktok/v1/publish` | Publish video post with caption and hashtags |
+| `POST /tiktok/v1/publish` | Publish or schedule video post (`video_path` or `video_id`, caption, `schedule_time`) |
 
 ---
 
-## 4. Video Publishing Workflow
+## 4. Video Publishing & Scheduling Workflows
 
 For complete instructions, request parameters, and Python examples, see the [Video Publishing Guide](./docs/PUBLISHING.md).
 
-### Quick Publish Example
+### 1-Step Direct Publishing (Recommended)
+Point directly to a local `.mp4` video file; the adapter handles upload chunking and ByteDance TOS signing automatically:
 
 ```bash
-# 1. Obtain upload authorization token
-AUTH=$(curl -s http://127.0.0.1:28130/tiktok/v1/upload/auth)
-TOKEN=$(echo "$AUTH" | jq -r '.video_token_v5')
+curl -X POST http://127.0.0.1:28130/tiktok/v1/publish \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_path": "/path/to/my_video.mp4",
+    "text": "Created with Toolcase Gateway! #ai #creator #tech",
+    "visibility": "public"
+  }'
+```
 
-# 2. Upload video binary to TikTok media store
-# (Upload using your video asset and the received token)
+### Scheduled Publishing
+Schedule video releases between 15 minutes and 30 days ahead using a Unix timestamp. The adapter automatically authorizes server-side video staging with TikTok Creator Center:
 
-# 3. Publish post to TikTok Creator Center
+```bash
+SCHEDULE_TS=$(($(date +%s) + 172800)) # 2 days from now
+
 curl -X POST http://127.0.0.1:28130/tiktok/v1/publish \
   -H "Content-Type: application/json" \
   -d "{
-    \"video_id\": \"$TOKEN\",
-    \"text\": \"Created with Toolcase Gateway! #ai #creator #tech\"
+    \"video_path\": \"/path/to/my_video.mp4\",
+    \"text\": \"Scheduled premier release! #ai #future\",
+    \"schedule_time\": ${SCHEDULE_TS}
   }"
 ```
+
+Scheduled videos appear in `GET /tiktok/v1/items` with `"is_scheduled": true` and `"schedule_time"`.
 
 ---
 

@@ -7,6 +7,7 @@ import json
 import os
 import random
 import string
+import time
 import urllib.parse
 import urllib.request
 import uuid
@@ -232,6 +233,22 @@ def fetch_upload_auth(cfg: dict, req_headers: dict) -> dict:
     }
 
 
+def acknowledge_schedule_storage(base_url: str, headers: dict) -> dict:
+    url = (
+        f"{base_url}/api/v1/post_schedule/ack/"
+        "?ack_type=2&aid=1988&app_name=tiktok_web&channel=tiktok_web&device_platform=web"
+    )
+    post_headers = {
+        **headers,
+        "Origin": base_url,
+        "Referer": f"{base_url}/tiktokstudio/content",
+    }
+    try:
+        return fetch_upstream_json(url, method="POST", headers=post_headers)
+    except Exception:
+        return {"status_code": -1}
+
+
 def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
     base_url, headers = _require_cookie(cfg, req_headers)
 
@@ -273,14 +290,30 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
     allow_duet = 1 if bool(body_json.get("allow_duet", False)) else 0
     allow_stitch = 1 if bool(body_json.get("allow_stitch", False)) else 0
 
-    schedule_raw = body_json.get("schedule_time") or body_json.get("scheduled_publish_time") or body_json.get("scheduled_time")
+    schedule_raw = (
+        body_json.get("schedule_time")
+        or body_json.get("scheduled_publish_time")
+        or body_json.get("scheduled_time")
+    )
     schedule_time = None
     if schedule_raw is not None:
         try:
             schedule_time = int(schedule_raw)
         except (ValueError, TypeError):
-            raise ValueError(f"Invalid schedule_time '{schedule_raw}': expected integer unix timestamp")
+            raise ValueError(
+                f"Invalid schedule_time '{schedule_raw}': expected integer unix timestamp"
+            )
+        now_ts = int(time.time())
+        if schedule_time < now_ts + 900:
+            raise ValueError(
+                f"Invalid schedule_time '{schedule_time}': must be at least 15 minutes in the future"
+            )
+        if schedule_time > now_ts + 30 * 86400:
+            raise ValueError(
+                f"Invalid schedule_time '{schedule_time}': exceeds maximum schedule window (30 days)"
+            )
         visibility_type = 0
+        acknowledge_schedule_storage(base_url, headers)
 
     # 1. Create project
     cid = create_project(base_url, headers)
@@ -296,10 +329,11 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
                 ms_token = v
                 break
 
+    tz_name = str(body_json.get("tz_name") or "UTC").strip()
     base_sign = "https://www.tiktok.com/api/v1/web/project/post/"
     query_sign = (
         f"app_name=tiktok_web&channel=tiktok_web&device_platform=web"
-        f"&aid=1988&msToken={ms_token}"
+        f"&aid=1988&msToken={ms_token}&tz_name={tz_name}"
     )
     with TikTokSigner(ua) as signer:
         sig = signer.sign(f"{base_sign}?{query_sign}")
@@ -310,6 +344,7 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
         "channel": "tiktok_web",
         "device_platform": "web",
         "aid": "1988",
+        "tz_name": tz_name,
         "msToken": ms_token,
         "X-Bogus": sig["x_bogus"],
         "_signature": sig["signature"],
@@ -336,7 +371,10 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
             "allow_duet": allow_duet,
             "allow_stitch": allow_stitch,
             "allow_comment": allow_comment,
+            "allow_content_reuse": 1,
+            "allow_ai_remix": 1,
         },
+        "content_check_id": "",
     }
     if schedule_time:
         feature_info["schedule_time"] = schedule_time
@@ -356,6 +394,9 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
                         "markup_text": text,
                         "music_info": {},
                         "poster_delay": 0,
+                        "cloud_edit_video_height": 1920,
+                        "cloud_edit_video_width": 1080,
+                        "cloud_edit_is_use_video_canvas": False,
                     },
                 }
             ],

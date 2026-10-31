@@ -91,6 +91,9 @@ def parse_item_list_response(raw_json: dict) -> dict:
         else:
             cover_url = str(cover_obj or "")
 
+        post_time = _parse_int(entry.get("post_time"), 0)
+        schedule_time = _parse_int(entry.get("schedule_time"), 0)
+        is_scheduled = bool(schedule_time and schedule_time > create_time)
         stats = entry.get("stats") or entry.get("statistics") or entry
         items.append(
             {
@@ -98,6 +101,9 @@ def parse_item_list_response(raw_json: dict) -> dict:
                 "item_id": item_id,
                 "desc": desc,
                 "create_time": create_time,
+                "post_time": post_time or create_time,
+                "schedule_time": schedule_time,
+                "is_scheduled": is_scheduled,
                 "duration_ms": duration,
                 "cover_url": cover_url,
                 "download_url": extract_best_download_url(url_list),
