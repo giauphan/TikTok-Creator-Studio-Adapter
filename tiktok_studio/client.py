@@ -273,6 +273,15 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
     allow_duet = 1 if bool(body_json.get("allow_duet", False)) else 0
     allow_stitch = 1 if bool(body_json.get("allow_stitch", False)) else 0
 
+    schedule_raw = body_json.get("schedule_time") or body_json.get("scheduled_publish_time") or body_json.get("scheduled_time")
+    schedule_time = None
+    if schedule_raw is not None:
+        try:
+            schedule_time = int(schedule_raw)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid schedule_time '{schedule_raw}': expected integer unix timestamp")
+        visibility_type = 0
+
     # 1. Create project
     cid = create_project(base_url, headers)
 
@@ -306,33 +315,37 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
         "_signature": sig["signature"],
     }
     post_url = f"{base_url}/tiktok/web/project/post/v1/?{urllib.parse.urlencode(params)}"
+    post_common = {
+        "creation_id": cid,
+        "enter_post_page_from": 1,
+        "post_type": 3,
+    }
+    feature_info = {
+        "geofencing_regions": [],
+        "playlist_name": "",
+        "playlist_id": "",
+        "tcm_params": '{"commerce_toggle_info":{}}',
+        "sound_exemption": 0,
+        "anchors": [],
+        "vedit_common_info": {
+            "draft": "",
+            "video_id": video_id,
+        },
+        "privacy_setting_info": {
+            "visibility_type": visibility_type,
+            "allow_duet": allow_duet,
+            "allow_stitch": allow_stitch,
+            "allow_comment": allow_comment,
+        },
+    }
+    if schedule_time:
+        post_common["schedule_time"] = schedule_time
+        feature_info["schedule_time"] = schedule_time
+
     post_payload = json.dumps(
         {
-            "post_common_info": {
-                "creation_id": cid,
-                "enter_post_page_from": 1,
-                "post_type": 3,
-            },
-            "feature_common_info_list": [
-                {
-                    "geofencing_regions": [],
-                    "playlist_name": "",
-                    "playlist_id": "",
-                    "tcm_params": '{"commerce_toggle_info":{}}',
-                    "sound_exemption": 0,
-                    "anchors": [],
-                    "vedit_common_info": {
-                        "draft": "",
-                        "video_id": video_id,
-                    },
-                    "privacy_setting_info": {
-                        "visibility_type": visibility_type,
-                        "allow_duet": allow_duet,
-                        "allow_stitch": allow_stitch,
-                        "allow_comment": allow_comment,
-                    },
-                }
-            ],
+            "post_common_info": post_common,
+            "feature_common_info_list": [feature_info],
             "single_post_req_list": [
                 {
                     "batch_index": 0,
@@ -361,12 +374,16 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
     single_resp = (raw or {}).get("single_post_resp_list", [{}])[0]
     item_id = str(single_resp.get("item_id") or "")
 
-    return {
+    status_str = "scheduled" if (schedule_time and raw.get("status_code") == 0) else ("published" if raw.get("status_code") == 0 else "error")
+    resp_dict = {
         "project_id": str(raw.get("project_id") or ""),
         "item_id": item_id,
         "project_status": int(raw.get("project_status") or 0),
         "visibility_type": visibility_type,
         "visibility": "only-me" if visibility_type == 1 else ("public" if visibility_type == 0 else "friends"),
         "status_code": int(raw.get("status_code") or 0),
-        "status": "published" if raw.get("status_code") == 0 else "error",
+        "status": status_str,
     }
+    if schedule_time:
+        resp_dict["schedule_time"] = schedule_time
+    return resp_dict

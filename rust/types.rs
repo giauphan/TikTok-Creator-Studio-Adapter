@@ -197,6 +197,8 @@ pub struct TikTokPublishRequest {
     pub title: String,
     pub text: String,
     pub visibility_type: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_time: Option<u64>,
 }
 
 impl TikTokPublishRequest {
@@ -223,6 +225,8 @@ pub struct TikTokPublishResponse {
     pub project_id: String,
     pub project_status: i32,
     pub status_code: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schedule_time: Option<u64>,
 }
 
 /// Module readiness and credential status summary.

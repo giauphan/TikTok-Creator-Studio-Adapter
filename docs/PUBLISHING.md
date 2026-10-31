@@ -36,7 +36,7 @@ Before publishing, ensure the adapter is configured and authenticated.
 Run a quick status check:
 
 ```bash
-curl -s http://127.0.0.1:20130/tiktok/v1/status
+curl -s http://127.0.0.1:28130/tiktok/v1/status
 ```
 
 Expected response:
@@ -53,7 +53,7 @@ Expected response:
 Check your authenticated user profile:
 
 ```bash
-curl -s http://127.0.0.1:20130/tiktok/v1/user
+curl -s http://127.0.0.1:28130/tiktok/v1/user
 ```
 
 Expected response:
@@ -81,7 +81,7 @@ Publishing a video requires three steps:
 Request upload authorization tokens from TikTok Creator Studio:
 
 ```bash
-curl -s http://127.0.0.1:20130/tiktok/v1/upload/auth
+curl -s http://127.0.0.1:28130/tiktok/v1/upload/auth
 ```
 
 #### Response
@@ -120,7 +120,7 @@ Once the upload completes, the `video_token_v5` (or returned upload `video_id`) 
 Submit the publish request with your video identifier, caption text, hashtags, and visibility setting (`only-me`, `public`, or `friends`):
 
 ```bash
-curl -X POST http://127.0.0.1:20130/tiktok/v1/publish \
+curl -X POST http://127.0.0.1:28130/tiktok/v1/publish \
   -H "Content-Type: application/json" \
   -d '{
     "video_id": "v1c025g50000dbi47gfog65vcfe2cs80",
@@ -136,6 +136,7 @@ curl -X POST http://127.0.0.1:20130/tiktok/v1/publish \
 | `text` | `string` | **Yes** | Post description, caption, hashtags (`#tag`), and mentions (`@username`) |
 | `visibility` / `status` | `string` | No | Video visibility: `"only-me"` (private, default), `"public"` (everyone), or `"friends"` |
 | `title` | `string` | No | Optional video title |
+| `schedule_time` | `integer` | No | Unix timestamp for scheduled publishing (between 15 min and 10 days in future) |
 | `allow_comment` | `boolean` | No | Whether to allow comments (default: `true`) |
 | `allow_duet` | `boolean` | No | Whether to allow Duets |
 | `allow_stitch` | `boolean` | No | Whether to allow Stitches |
@@ -152,13 +153,6 @@ curl -X POST http://127.0.0.1:20130/tiktok/v1/publish \
 ```
 
 - `visibility_type`: `1` represents private ("Only me" / `visibility_only_you`), `0` represents public, `2` represents friends only.
-{
-  "project_id": "7702355712046828820",
-  "project_status": 1,
-  "status_code": 0
-}
-```
-
 - `project_id`: Creator Center project ID for the published post.
 - `project_status`: Status indicator (`1` = submitted/processing).
 - `status_code`: `0` indicates success.
@@ -170,7 +164,7 @@ curl -X POST http://127.0.0.1:20130/tiktok/v1/publish \
 After publishing, check your Creator Studio library to verify the post is live and view analytics:
 
 ```bash
-curl -s "http://127.0.0.1:20130/tiktok/v1/items?count=5"
+curl -s "http://127.0.0.1:28130/tiktok/v1/items?count=5"
 ```
 
 Response snippet:
@@ -209,7 +203,7 @@ import json
 import urllib.request
 import urllib.parse
 
-GATEWAY_BASE = "http://127.0.0.1:20130/tiktok"
+GATEWAY_BASE = "http://127.0.0.1:28130/tiktok"
 
 def request_json(path, method="GET", body=None):
     url = f"{GATEWAY_BASE}{path}"

@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -108,7 +109,8 @@ class TestTikTokStudioModule(unittest.TestCase):
         body = json.loads(status_resp["body"])
         self.assertIn("configured", body)
 
-    def test_publish_visibility_mapping(self):
+    @patch("adapter.load_module_config", return_value={"enabled": True, "cookie": "", "base_url": "https://www.tiktok.com/"})
+    def test_publish_visibility_mapping(self, _mock_cfg):
         # Without cookie, returns 401 Unauthorized
         resp = handle_request({
             "method": "POST",
@@ -134,6 +136,35 @@ class TestTikTokStudioModule(unittest.TestCase):
         self.assertIn("Credential=test_ak", headers["Authorization"])
         self.assertEqual(headers["X-Amz-Security-Token"], "test_st")
         self.assertIn("Action=ApplyUploadInner", qs)
+
+    @patch("tiktok_studio.client.fetch_upstream_json")
+    @patch("tiktok_studio.client.TikTokSigner")
+    @patch("tiktok_studio.client.create_project", return_value="test_creation_id_123")
+    def test_publish_video_post_with_schedule_time(self, _mock_create, mock_signer_cls, mock_fetch):
+        from tiktok_studio.client import publish_video_post
+        mock_signer = mock_signer_cls.return_value.__enter__.return_value
+        mock_signer.sign.return_value = {"x_bogus": "bogus123", "signature": "sig123"}
+        mock_fetch.return_value = {
+            "status_code": 0,
+            "project_id": "proj_999",
+            "project_status": 1,
+            "single_post_resp_list": [{"item_id": "item_888"}],
+        }
+        cfg = {"base_url": "https://www.tiktok.com", "cookie": "sessionid=123; msToken=tok456"}
+        body = {
+            "video_id": "v09044g4000000000000000000000000",
+            "text": "Scheduled post test",
+            "schedule_time": 1793450000,
+        }
+        res = publish_video_post(cfg, {}, body)
+        self.assertEqual(res["status"], "scheduled")
+        self.assertEqual(res["schedule_time"], 1793450000)
+        self.assertEqual(res["project_id"], "proj_999")
+
+        call_args = mock_fetch.call_args
+        sent_body = json.loads(call_args.kwargs["body"].decode("utf-8"))
+        self.assertEqual(sent_body["post_common_info"]["schedule_time"], 1793450000)
+        self.assertEqual(sent_body["feature_common_info_list"][0]["schedule_time"], 1793450000)
 
 
 if __name__ == "__main__":

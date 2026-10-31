@@ -9,7 +9,7 @@ Provides creator post listings, watermark-free CDN video download link resolutio
 ## 1. Install into Toolcase Gateway
 
 ### Via Dashboard UI (1-Click or Custom GitHub Install)
-1. Open `http://127.0.0.1:20130/dashboard#module-catalog`.
+1. Open `http://127.0.0.1:28130/dashboard#module-catalog`.
 2. Click **Explore & install** on **TikTok Creator Studio Adapter** (`tiktok-studio`), or paste:
    ```text
    https://github.com/giauphan/TikTok-Creator-Studio-Adapter.git
@@ -17,7 +17,7 @@ Provides creator post listings, watermark-free CDN video download link resolutio
 
 ### Via REST API
 ```bash
-curl -X POST http://127.0.0.1:20130/api/v1/dashboard/modules/install \
+curl -X POST http://127.0.0.1:28130/api/v1/dashboard/modules/install \
   -H "Content-Type: application/json" \
   -d '{
     "source": "https://github.com/giauphan/TikTok-Creator-Studio-Adapter.git",
@@ -61,14 +61,14 @@ For complete instructions, request parameters, and Python examples, see the [Vid
 
 ```bash
 # 1. Obtain upload authorization token
-AUTH=$(curl -s http://127.0.0.1:20130/tiktok/v1/upload/auth)
+AUTH=$(curl -s http://127.0.0.1:28130/tiktok/v1/upload/auth)
 TOKEN=$(echo "$AUTH" | jq -r '.video_token_v5')
 
 # 2. Upload video binary to TikTok media store
 # (Upload using your video asset and the received token)
 
 # 3. Publish post to TikTok Creator Center
-curl -X POST http://127.0.0.1:20130/tiktok/v1/publish \
+curl -X POST http://127.0.0.1:28130/tiktok/v1/publish \
   -H "Content-Type: application/json" \
   -d "{
     \"video_id\": \"$TOKEN\",
