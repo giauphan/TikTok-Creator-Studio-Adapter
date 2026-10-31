@@ -163,7 +163,6 @@ class TestTikTokStudioModule(unittest.TestCase):
 
         call_args = mock_fetch.call_args
         sent_body = json.loads(call_args.kwargs["body"].decode("utf-8"))
-        self.assertEqual(sent_body["post_common_info"]["schedule_time"], 1793450000)
         self.assertEqual(sent_body["feature_common_info_list"][0]["schedule_time"], 1793450000)
 
 

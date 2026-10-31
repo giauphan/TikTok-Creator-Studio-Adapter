@@ -339,7 +339,6 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
         },
     }
     if schedule_time:
-        post_common["schedule_time"] = schedule_time
         feature_info["schedule_time"] = schedule_time
 
     post_payload = json.dumps(
@@ -375,6 +374,7 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
     item_id = str(single_resp.get("item_id") or "")
 
     status_str = "scheduled" if (schedule_time and raw.get("status_code") == 0) else ("published" if raw.get("status_code") == 0 else "error")
+    status_msg = str(raw.get("status_msg") or raw.get("message") or "")
     resp_dict = {
         "project_id": str(raw.get("project_id") or ""),
         "item_id": item_id,
@@ -382,8 +382,11 @@ def publish_video_post(cfg: dict, req_headers: dict, body_json: dict) -> dict:
         "visibility_type": visibility_type,
         "visibility": "only-me" if visibility_type == 1 else ("public" if visibility_type == 0 else "friends"),
         "status_code": int(raw.get("status_code") or 0),
+        "status_msg": status_msg,
         "status": status_str,
     }
+    if raw.get("status_code") != 0:
+        resp_dict["error"] = {"message": status_msg or f"TikTok status_code: {raw.get('status_code')}", "raw": raw}
     if schedule_time:
         resp_dict["schedule_time"] = schedule_time
     return resp_dict
